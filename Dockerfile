@@ -1,5 +1,6 @@
 FROM python:3.13-slim
 
+# python -Xfrozen_modules=off -m debugpy --listen 0.0.0.0:8001 start.py
 # required for psycopg2
 RUN apt update \
     && apt install -y --no-install-recommends \

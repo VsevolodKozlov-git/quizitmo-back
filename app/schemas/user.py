@@ -6,6 +6,9 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+    email: str
+    first_name: str
+    second_name: str
 
 class UserUpdate(UserBase):
     password: Optional[str] = Field(None, min_length=8, max_length=250)
@@ -15,8 +18,8 @@ class UserRead(UserBase):
 
     class Config:
         orm_mode = True
-        
+
 class Token(BaseModel):
     access_token: str
     token_type: str
-    
+

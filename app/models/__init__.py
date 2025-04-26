@@ -1,1 +1,7 @@
+from .answer_option import AnswerOption
+from .course_member import CourseMember
+from .course import Course
+from .question import Question
+from .quiz_attempt import QuizAttempt
+from .quiz import Quiz
 from .user import User

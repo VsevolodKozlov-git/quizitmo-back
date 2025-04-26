@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import insert
 from app.db.session import get_session
-from app.models.user import User  # Adjust the import according to your project structure
+from app.models.user import User
 import app.schemas.user as user_schemas
 import typing as tp
 from app.db.queries import get_user_by_username
@@ -27,7 +27,7 @@ async def create_api_token(
     except NoResultFound:
         raise HTTPException(status_code=400, detail=f'no user with username {user_login.username}')
     print(user_db)
-    is_password_correct = auth.verify_password(user_login.password, user_db.password)
+    is_password_correct = auth.verify_password(user_login.password, user_db.password_hash)
     if not is_password_correct:
         raise HTTPException(status_code=400, detail=f'Incorrect password for username: {user_login.username}')
 
@@ -56,10 +56,11 @@ async def create_user(
         raise HTTPException(status_code=400, detail=f'Пользователь с username {user.username} уже существует')
     hashed_password = auth.get_password_hash(user.password)
     user_data = user.model_dump()
-    user_data['hashed_password'] = hashed_password
+    user_data['password_hash'] = hashed_password
+    del user_data['password']
     insert_stmt = (
         insert(User)
-        .values(password=hashed_password, username=user.username)
+        .values(user_data)
         .returning(User.id_user)
     )
     user_id = (await db.execute(insert_stmt)).scalar()
