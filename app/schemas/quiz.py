@@ -36,3 +36,53 @@ class QuizCreate(BaseModel):
     model_config = {
         "extra": "forbid"
     }
+
+class AnswerOptionDo(BaseModel):
+    id_answer_option: int = Field(alias="id_answer")
+    text: str
+
+    model_config = {
+        "from_attributes": True,
+        "populate_by_name": True
+    }
+
+
+class QuestionDo(BaseModel):
+    id_question: int
+    title: str
+    text: str
+    answers: List[AnswerOptionDo]
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class QuizDoOut(BaseModel):
+    title: str
+    questions: List[QuestionDo]
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class AnswerSubmit(BaseModel):
+    id_question: int
+    id_answer: int
+
+    model_config = {
+        "extra": "forbid"
+    }
+
+
+class QuizSubmitRequest(BaseModel):
+    answers: List[AnswerSubmit]
+
+    model_config = {
+        "extra": "forbid"
+    }
+
+
+class QuizSubmitResponse(BaseModel):
+    feedback: str

@@ -1,30 +1,32 @@
 # app/endpoints/course.py
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import select, delete
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_session
 from app.core.auth import get_current_user
+from app.db.session import get_session
+from app.models.answer_option import AnswerOption
 from app.models.course import Course
-from app.models.quiz import Quiz
 from app.models.course_member import CourseMember
-from app.models.user import User
+from app.models.quiz import Quiz
 from app.models.quiz_attempt import QuizAttempt
-
+from app.models.quiz_attempt_answer import QuizAttemptAnswer
+from app.models.user import User
 from app.schemas.course import (
     CourseCreate,
-    CourseOut,
-    CourseList,
     CourseDetailOut,
-    QuizOut,
-    UserOut,
-    UserList,
-    RemoveUserRequest,
+    CourseForYouDetail,
+    CourseList,
+    CourseOut,
     InviteUserRequest,
     QuizForYouOut,
-    CourseForYouDetail,
+    QuizOut,
+    RemoveUserRequest,
+    UserList,
+    UserOut,
 )
+
 
 router = APIRouter(prefix="/course")
 
@@ -197,27 +199,22 @@ async def list_for_you_courses(
 async def get_course_for_you(
     id_course: int,
     session: AsyncSession = Depends(get_session),
-    current_user = Depends(get_current_user),
+    current_user=Depends(get_current_user),
 ):
-    """
-    Return course title and quizzes with progress info for the current user.
-    """
-        # fetch course title
+    # fetch course
     course_obj = await session.get(Course, id_course)
     if course_obj is None:
         raise HTTPException(status_code=404, detail="Course not found")
 
     # membership check
     membership = await session.execute(
-        select(CourseMember.id_course_member)
-        .where(
+        select(CourseMember.id_course_member).where(
             CourseMember.id_course == id_course,
-            CourseMember.id_user == current_user.id_user
+            CourseMember.id_user == current_user.id_user,
         )
     )
     if membership.scalar_one_or_none() is None:
         raise HTTPException(status_code=403, detail="Forbidden")
-
 
     # fetch quizzes
     quiz_res = await session.execute(
@@ -225,29 +222,50 @@ async def get_course_for_you(
     )
     quizzes = quiz_res.scalars().all()
 
-    # for each quiz, compute is_complete and correct_ratio
     quiz_outputs: list[QuizForYouOut] = []
     for quiz in quizzes:
-        # get latest attempt by date
+        # latest attempt
         attempt_res = await session.execute(
             select(QuizAttempt)
             .where(
                 QuizAttempt.id_quiz == quiz.id_quiz,
-                QuizAttempt.id_user == current_user.id_user
+                QuizAttempt.id_user == current_user.id_user,
             )
             .order_by(QuizAttempt.attempt_date.desc())
             .limit(1)
         )
         attempt = attempt_res.scalar_one_or_none()
 
+        # "is_complete" is true if any attempt exists
+        is_complete = attempt is not None
+
+        # compute correct_ratio only if an attempt exists
         if attempt:
-            total = attempt.total_answers or 0
-            correct = attempt.correct_answers or 0
-            ratio = correct / total if total > 0 else 0.0
-            is_complete = ratio >= quiz.min_correct_ratio
-            correct_ratio = ratio
+            # count total answers in this attempt
+            total_res = await session.execute(
+                select(func.count())
+                .select_from(QuizAttemptAnswer)
+                .where(QuizAttemptAnswer.id_quiz_attempt == attempt.id_quiz_attempt)
+            )
+            total = total_res.scalar_one() or 0
+
+            # count correct answers via join to AnswerOption
+            correct_res = await session.execute(
+                select(func.count())
+                .select_from(QuizAttemptAnswer)
+                .join(
+                    AnswerOption,
+                    AnswerOption.id_answer_option == QuizAttemptAnswer.id_answer_option
+                )
+                .where(
+                    QuizAttemptAnswer.id_quiz_attempt == attempt.id_quiz_attempt,
+                    AnswerOption.is_correct == True
+                )
+            )
+            correct = correct_res.scalar_one() or 0
+
+            correct_ratio = (correct / total) if total > 0 else 0.0
         else:
-            is_complete = False
             correct_ratio = None
 
         quiz_outputs.append(

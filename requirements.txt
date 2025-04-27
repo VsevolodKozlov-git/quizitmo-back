@@ -16,3 +16,4 @@ jose
 PyJWT
 python-multipart
 orjson
+openai
