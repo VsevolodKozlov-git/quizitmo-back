@@ -33,16 +33,6 @@ class QuizAttempt(Base):
         nullable=False,
         comment="Attempt timestamp"
     )
-    correct_answers: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        comment="Count of correct answers"
-    )
-    total_answers: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        comment="Count of total answers"
-    )
     feedback: Mapped[str] = mapped_column(
         Text,
         nullable=True,

@@ -5,3 +5,4 @@ from .question import Question
 from .quiz_attempt import QuizAttempt
 from .quiz import Quiz
 from .user import User
+from .quiz_attempt_answer import QuizAttemptAnswer

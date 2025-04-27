@@ -88,3 +88,26 @@ class InviteUserRequest(BaseModel):
     model_config = {
         "extra": "forbid"
     }
+
+class QuizForYouOut(BaseModel):
+    id_quiz: int = Field(alias="id")
+    title: str
+    description: Optional[str]
+    min_correct_ratio: float
+    coins: int
+    is_complete: bool
+    correct_ratio: Optional[float]
+
+    model_config = {
+        "from_attributes": True,
+        "populate_by_name": True
+    }
+
+
+class CourseForYouDetail(BaseModel):
+    title: str
+    quizes: List[QuizForYouOut]
+
+    model_config = {
+        "from_attributes": True
+    }
