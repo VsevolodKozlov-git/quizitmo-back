@@ -22,6 +22,7 @@ router = APIRouter(prefix="/user")
 async def create_api_token(
         user_login: tp.Annotated[OAuth2PasswordRequestForm, Depends()]
 ) -> user_schemas.Token:
+    print(user_login)
     try:
         user_db = await get_user_by_username(user_login.username)
     except NoResultFound:

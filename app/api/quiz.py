@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user
@@ -18,9 +18,12 @@ from app.models.quiz_attempt_answer import QuizAttemptAnswer
 from app.schemas.course import QuizOut
 from app.schemas.quiz import (
     AnswerOptionDo,
+    AnswerOptionResult,
     QuestionDo,
+    QuestionResult,
     QuizCreate,
     QuizDoOut,
+    QuizResultsOut,
     QuizSubmitRequest,
     QuizSubmitResponse,
 )
@@ -217,3 +220,100 @@ async def submit_quiz(
     await session.commit()
 
     return QuizSubmitResponse(feedback=feedback)
+
+
+
+@router.get("/for_you/{quiz_id}/results", response_model=QuizResultsOut)
+async def get_quiz_results(
+    quiz_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user = Depends(get_current_user),
+):
+    # 1. Ensure the user has taken this quiz
+    attempt_res = await session.execute(
+        select(QuizAttempt)
+        .where(
+            QuizAttempt.id_quiz == quiz_id,
+            QuizAttempt.id_user == current_user.id_user,
+        )
+        .order_by(QuizAttempt.attempt_date.desc())
+        .limit(1)
+    )
+    attempt = attempt_res.scalar_one_or_none()
+    if attempt is None:
+        raise HTTPException(status_code=422, detail="No quiz result found")
+
+    # 2. Load quiz
+    quiz = await session.get(Quiz, quiz_id)
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    # 3. Fetch all questions for this quiz
+    q_res = await session.execute(
+        select(Question).where(Question.id_quiz == quiz_id)
+    )
+    questions = q_res.scalars().all()
+
+    # 4. Fetch all answer options for these questions
+    question_ids = [q.id_question for q in questions]
+    ao_res = await session.execute(
+        select(AnswerOption).where(AnswerOption.id_question.in_(question_ids))
+    )
+    all_options = ao_res.scalars().all()
+    options_map: dict[int, list[AnswerOption]] = {}
+    for opt in all_options:
+        options_map.setdefault(opt.id_question, []).append(opt)
+
+    # 5. Fetch the user's selected answers in this attempt
+    aa_res = await session.execute(
+        select(QuizAttemptAnswer).where(
+            QuizAttemptAnswer.id_quiz_attempt == attempt.id_quiz_attempt
+        )
+    )
+    answered = aa_res.scalars().all()
+    selected_map = {a.id_question: a.id_answer_option for a in answered}
+
+    # 6. Build per-question result entries
+    question_results: list[QuestionResult] = []
+    correct_count = 0
+    for q in questions:
+        opts = options_map.get(q.id_question, [])
+        # find correct option
+        correct_opt = next((o for o in opts if o.is_correct), None)
+        correct_id = correct_opt.id_answer_option if correct_opt else None
+
+        # find selected
+        selected_id = selected_map.get(q.id_question)
+
+        # tally correctness
+        if selected_id is not None and selected_id == correct_id:
+            correct_count += 1
+
+        ao_results = [
+            AnswerOptionResult(id_answer=o.id_answer_option, text=o.text)
+            for o in opts
+        ]
+
+        question_results.append(
+            QuestionResult(
+                id_question=q.id_question,
+                title=q.title,
+                text=q.text,
+                answers=ao_results,
+                id_answer_correct=correct_id,
+                id_answer_selected=selected_id,
+            )
+        )
+
+    total = len(question_results)
+    is_min = (correct_count / total) >= quiz.min_correct_ratio if total > 0 else False
+
+    return QuizResultsOut(
+        title=quiz.title,
+        questions=question_results,
+        correct_answers=correct_count,
+        total_answers=total,
+        is_min_correct_ratio=is_min,
+        coins=quiz.coins,
+        feedback=attempt.feedback or "",
+    )

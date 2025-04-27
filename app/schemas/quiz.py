@@ -86,3 +86,39 @@ class QuizSubmitRequest(BaseModel):
 
 class QuizSubmitResponse(BaseModel):
     feedback: str
+
+class AnswerOptionResult(BaseModel):
+    id_answer_option: int = Field(alias="id_answer")
+    text: str
+
+    model_config = {
+        "from_attributes": True,
+        "populate_by_name": True
+    }
+
+
+class QuestionResult(BaseModel):
+    id_question: int
+    title: str
+    text: str
+    answers: List[AnswerOptionResult]
+    id_answer_correct: int
+    id_answer_selected: int
+
+    model_config = {
+        "from_attributes": True
+    }
+
+
+class QuizResultsOut(BaseModel):
+    title: str
+    questions: List[QuestionResult]
+    correct_answers: int
+    total_answers: int
+    is_min_correct_ratio: bool
+    coins: int
+    feedback: str
+
+    model_config = {
+        "from_attributes": True
+    }
