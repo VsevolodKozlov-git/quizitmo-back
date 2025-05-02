@@ -10,6 +10,7 @@ from app.models.course import Course
 from app.models.question import Question
 from app.models.answer_option import AnswerOption
 from app.models.quiz_attempt_answer import QuizAttemptAnswer
+from app.schemas.llm import MutationPayload
 
 
 async def generate_feedback_prompt(
@@ -102,3 +103,34 @@ async def generate_feedback_prompt(
     ])
 
     return "\n".join(prompt_lines)
+
+
+def generate_quiz_help_prompt(payload: MutationPayload) -> str:
+    """
+    Generate a prompt for LLM to help teacher implement quiz.
+    """
+    correct_answers = [a.text for a in payload.answers if a.is_correct]
+    incorrect_answers = [a.text for a in payload.answers if not a.is_correct]
+
+    prompt = f"""You're a helpful assistant for quiz creation. The teacher is working on:
+Quiz Title: {payload.quiz_title}
+Quiz Description: {payload.quiz_description}
+
+Current Question:
+Title: {payload.question_title}
+Text: {payload.question_text}
+
+Correct Answers: {'\n - '.join(correct_answers)}
+Incorrect Answers: {'\n -'.join(incorrect_answers)}
+
+Additional Materials Provided: {payload.additional_materials}
+
+Please provide detailed, pedagogical advice to improve this quiz question.
+Consider:
+- Clarity and precision of the question
+- Appropriateness of answers
+- Potential improvements
+- Common student misconceptions
+- Alignment with learning objectives
+"""
+    return prompt

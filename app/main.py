@@ -1,4 +1,4 @@
-from app.api import service_call, user, course, quiz
+from app.api import service_call, user, course, quiz, llm
 from fastapi import FastAPI
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,7 +27,8 @@ root_routers = [
     (service_call.router, ["Service Calls"]),
     (user.router, ["User Management"]),
     (course.router, ['Курсы']),
-    (quiz.router, ['Квизы'])
+    (quiz.router, ['Квизы']),
+    (llm.router, ['Взаимодействие с LLM'])
 ]
 
 include_routers(root_routers, "")

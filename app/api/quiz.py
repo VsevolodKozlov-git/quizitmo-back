@@ -27,7 +27,7 @@ from app.schemas.quiz import (
     QuizSubmitRequest,
     QuizSubmitResponse,
 )
-from app.services.feedback_service import generate_feedback_prompt
+from app.services.prompts import generate_feedback_prompt
 from app.services.llm_client import send_to_llm
 
 
@@ -212,7 +212,7 @@ async def submit_quiz(
         for ans in payload.answers
     ]
     prompt = await generate_feedback_prompt(quiz_id, answers_list, session)
-    feedback = await send_to_llm(prompt)
+    feedback = await send_to_llm({"role": "user", "content": prompt})
 
     # 7. Persist feedback on attempt
     attempt.feedback = feedback
