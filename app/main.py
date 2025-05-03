@@ -24,10 +24,10 @@ def include_routers(routers: list, prefix: str) -> None:
         application.include_router(router, prefix=prefix, tags=tags)
 
 root_routers = [
-    (service_call.router, ["Service Calls"]),
-    (user.router, ["User Management"]),
-    (course.router, ['Курсы']),
-    (quiz.router, ['Квизы']),
+    (service_call.router, ["Системные вызовы"]),
+    (user.router, ["Управление пользователем"]),
+    (course.router, ['Управление курсами']),
+    (quiz.router, ['Управление']),
     (llm.router, ['Взаимодействие с LLM'])
 ]
 
