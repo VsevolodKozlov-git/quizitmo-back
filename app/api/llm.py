@@ -16,10 +16,15 @@ async def get_llm_response(
 ):
     system_prompt = generate_quiz_help_prompt(payload)
 
+    from_response_to_gpt = {
+        'user': 'user',
+        'bot': 'assistant'
+    }
+
     messages = [
         {"role": "system", "content": system_prompt},
         *[
-            {"role": msg.from_, "content": msg.text}
+            {"role": from_response_to_gpt[msg.from_], "content": msg.text}
             for msg in payload.prev_messages
         ],
         {"role": "user", "content": payload.user_message}

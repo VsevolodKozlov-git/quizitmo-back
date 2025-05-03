@@ -1,5 +1,3 @@
-# app/models/course_member.py
-
 from sqlalchemy import Integer, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
