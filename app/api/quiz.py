@@ -229,6 +229,11 @@ async def get_quiz_results(
     session: AsyncSession = Depends(get_session),
     current_user = Depends(get_current_user),
 ):
+        # 2. Load quiz
+    quiz = await session.get(Quiz, quiz_id)
+    if quiz is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
     # 1. Ensure the user has taken this quiz
     attempt_res = await session.execute(
         select(QuizAttempt)
@@ -243,10 +248,6 @@ async def get_quiz_results(
     if attempt is None:
         raise HTTPException(status_code=422, detail="No quiz result found")
 
-    # 2. Load quiz
-    quiz = await session.get(Quiz, quiz_id)
-    if quiz is None:
-        raise HTTPException(status_code=404, detail="Quiz not found")
 
     # 3. Fetch all questions for this quiz
     q_res = await session.execute(

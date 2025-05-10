@@ -57,7 +57,7 @@ def decode_token(token: str) -> dict:
         # note: algorithms is a list
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
-        raise HTTPException(status_code=403, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Invalid token format")
 
 async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
     return await get_user_by_token(token)
@@ -70,7 +70,7 @@ def get_user_by_token(token):
         user = get_user_by_username(username)
     except NoResultFound:
         raise HTTPException(
-            status_code=403,
+            status_code=401,
             detail='Invalid token. No such user'
         )
     return user
