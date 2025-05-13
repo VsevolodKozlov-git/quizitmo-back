@@ -222,6 +222,116 @@ async def submit_quiz(
     return QuizSubmitResponse(feedback=feedback)
 
 
+@router.post(
+    "/for_you/{quiz_id}/submit",
+    summary="Submit quiz and stream back SSE when feedback is ready",
+)
+async def submit_quiz_sse(
+    quiz_id: int,
+    payload: QuizSubmitRequest,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
+
+    quiz = await session.get(Quiz, quiz_id)
+    if not quiz:
+        raise HTTPException(404, "Quiz not found")
+
+    member = await session.execute(
+        select(CourseMember.id_course_member).where(
+            CourseMember.id_course == quiz.id_course,
+            CourseMember.id_user == current_user.id_user,
+        )
+    )
+    if member.scalar_one_or_none() is None:
+        raise HTTPException(403, "Forbidden")
+
+
+    already = await session.execute(
+        select(QuizAttempt.id_quiz_attempt).where(
+            QuizAttempt.id_quiz == quiz_id,
+            QuizAttempt.id_user == current_user.id_user,
+        )
+    )
+    if already.scalar_one_or_none() is not None:
+        raise HTTPException(403, "Quiz already taken")
+
+
+    attempt = QuizAttempt(
+        id_quiz=quiz_id,
+        id_user=current_user.id_user,
+        attempt_date=datetime.utcnow(),
+    )
+    session.add(attempt)
+    await session.flush()
+
+    for ans in payload.answers:
+        session.add(
+            QuizAttemptAnswer(
+                id_quiz_attempt=attempt.id_quiz_attempt,
+                id_question=ans.id_question,
+                id_answer_option=ans.id_answer,
+            )
+        )
+
+    await session.commit()
+
+
+    answers_list = [
+        {"id_question": a.id_question, "id_answer": a.id_answer}
+        for a in payload.answers
+    ]
+    prompt = await generate_feedback_prompt(quiz_id, answers_list, session)
+
+    generate_feedback_task.delay(attempt.id_quiz_attempt, prompt)
+
+
+    async def event_generator():
+        channel = f"quiz_result:{attempt.id_quiz_attempt}"
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(channel)
+
+
+        yield "event: started\ndata: Quiz feedback generation started\n\n"
+
+        try:
+            while True:
+
+                if await request.is_disconnected():
+                    break
+
+                msg = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=1.0
+                )
+                if msg and msg["type"] == "message":
+                    payload = json.loads(msg["data"])
+                    feedback = payload["feedback"]
+
+
+                    async with get_session() as write_sess:
+                        qa = await write_sess.get(
+                            QuizAttempt, attempt.id_quiz_attempt
+                        )
+                        qa.feedback = feedback
+                        write_sess.add(qa)
+                        await write_sess.commit()
+
+                    done_data = json.dumps(
+                        {"id_quiz_attempt": attempt.id_quiz_attempt}
+                    )
+                    yield f"event: done\ndata: {done_data}\n\n"
+                    break
+
+                await asyncio.sleep(0.1)
+
+        finally:
+            await pubsub.unsubscribe(channel)
+            await pubsub.close()
+
+    return StreamingResponse(
+        event_generator(), media_type="text/event-stream"
+    )
 
 @router.get("/for_you/{quiz_id}/results", response_model=QuizResultsOut)
 async def get_quiz_results(
