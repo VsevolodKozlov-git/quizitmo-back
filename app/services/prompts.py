@@ -120,8 +120,8 @@ Current Question:
 Title: {payload.question_title}
 Text: {payload.question_text}
 
-Correct Answers: {'\n - '.join(correct_answers)}
-Incorrect Answers: {'\n -'.join(incorrect_answers)}
+Correct Answers: {' - '.join(correct_answers)}
+Incorrect Answers: {' - '.join(incorrect_answers)}
 
 Additional Materials Provided: {payload.additional_materials}
 

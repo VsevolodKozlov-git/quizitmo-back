@@ -1,7 +1,10 @@
 import os
-
+from pathlib import Path
 
 class Settings: # type: ignore
+    root_path = Path(__file__).parent.parent.parent
+    uploads_path = root_path / 'uploads'
+    db_path = root_path / 'vector_db'
     def get_url(self) -> str:
         user = os.getenv("POSTGRES_USER", "postgres")
         password = os.getenv("POSTGRES_PASSWORD", "786811")

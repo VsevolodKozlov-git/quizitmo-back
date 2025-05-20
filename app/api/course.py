@@ -1,8 +1,11 @@
 # app/endpoints/course.py
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+import os
+
+from sqlalchemy.testing.assertsql import CountStatements
 
 from app.core.auth import get_current_user
 from app.db.session import get_session
@@ -26,7 +29,9 @@ from app.schemas.course import (
     UserList,
     UserOut,
 )
+from app.services.llm_client import save_pdf_to_db
 
+from app.core.settings import Settings
 
 router = APIRouter(prefix="/course")
 
@@ -281,3 +286,43 @@ async def get_course_for_you(
         )
 
     return CourseForYouDetail(title=course_obj.title, quizes=quiz_outputs)
+
+@router.post(
+    "/{course_id}/add_file",
+    status_code=201,
+    summary="Upload a PDF file and attach it to a course",
+)
+async def add_file_to_course(
+    course_id: int,
+    file: UploadFile = File(..., description="A PDF document"),
+    session: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
+    # 1. Verify the user owns this course
+    course_obj = await session.get(Course, course_id)
+    if course_obj is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    if course_obj.id_user != current_user.id_user:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # 2. Validate content type
+    if file.content_type != "application/pdf":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type: {file.content_type}. Only PDFs are allowed."
+        )
+
+    # 3. Read file and save to disk
+    contents = await file.read()
+    upload_dir = os.path.join(Settings.uploads_path, str(course_id))
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Prevent overwriting by prefixing with a timestamp
+    # safe_name = f"{int(__import__('time').time())}_{file.filename}"
+    safe_name = file.filename
+    file_path = os.path.join(upload_dir, safe_name)
+    with open(file_path, "wb") as f:
+        f.write(contents)
+    collection_name = f'course_id{course_id}'
+
+    save_pdf_to_db(pdf_path=file_path, file_name=safe_name, collection_name=collection_name)

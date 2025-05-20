@@ -14,7 +14,7 @@ async_session = sessionmaker(
     engine, autocommit=False, autoflush=False, class_=AsyncSession
 )
 
-async def get_session() -> AsyncGenerator[AsyncSession]:
+async def get_session():
     async with async_session() as session:
         yield session
 
