@@ -120,17 +120,8 @@ Current Question:
 Title: {payload.question_title}
 Text: {payload.question_text}
 
-Correct Answers: {' - '.join(correct_answers)}
-Incorrect Answers: {' - '.join(incorrect_answers)}
-
 Additional Materials Provided: {payload.additional_materials}
 
-Please provide detailed, pedagogical advice to improve this quiz question.
-Consider:
-- Clarity and precision of the question
-- Appropriateness of answers
-- Potential improvements
-- Common student misconceptions
-- Alignment with learning objectives
+Please answer on questions that will teacher ask to help him create generate question for this quiz
 """
     return prompt

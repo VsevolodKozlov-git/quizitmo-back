@@ -20,6 +20,7 @@ async def get_llm_response(
         'user': 'user',
         'bot': 'assistant'
     }
+    id_ = 10
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -29,7 +30,8 @@ async def get_llm_response(
         ],
         {"role": "user", "content": payload.user_message}
     ]
+    collection_name = f'collection{id_}'
 
-    response_text = await send_to_llm(messages)
+    response_text = send_to_llm(messages, collection_name)
 
     return {"text": response_text}

@@ -1,17 +1,28 @@
 # app/endpoints/course.py
 
-from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, File
+import asyncio
+import os
+import uuid
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Response,
+    UploadFile,
+)
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-import os
-
 from sqlalchemy.testing.assertsql import CountStatements
 
 from app.core.auth import get_current_user
+from app.core.settings import Settings
 from app.db.session import get_session
 from app.models.answer_option import AnswerOption
 from app.models.course import Course
 from app.models.course_member import CourseMember
+from app.models.file import File as CourseFile
 from app.models.quiz import Quiz
 from app.models.quiz_attempt import QuizAttempt
 from app.models.quiz_attempt_answer import QuizAttemptAnswer
@@ -29,9 +40,9 @@ from app.schemas.course import (
     UserList,
     UserOut,
 )
+from app.schemas.file import FileOut, RemoveFileRequest
 from app.services.llm_client import save_pdf_to_db
 
-from app.core.settings import Settings
 
 router = APIRouter(prefix="/course")
 
@@ -294,35 +305,105 @@ async def get_course_for_you(
 )
 async def add_file_to_course(
     course_id: int,
-    file: UploadFile = File(..., description="A PDF document"),
+    upload: UploadFile = File(..., description="A PDF document"),
     session: AsyncSession = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
-    # 1. Verify the user owns this course
+    # 1. Verify ownership
     course_obj = await session.get(Course, course_id)
     if course_obj is None:
         raise HTTPException(status_code=404, detail="Course not found")
     if course_obj.id_user != current_user.id_user:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    # 2. Validate content type
-    if file.content_type != "application/pdf":
+    # 2. Validate PDF
+    if upload.content_type != "application/pdf":
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid file type: {file.content_type}. Only PDFs are allowed."
+            detail="Only PDF uploads are allowed"
         )
 
-    # 3. Read file and save to disk
-    contents = await file.read()
-    upload_dir = os.path.join(Settings.uploads_path, str(course_id))
+    # 3. Save file to disk
+    upload_dir = os.path.join("uploads", f"course_{course_id}")
     os.makedirs(upload_dir, exist_ok=True)
 
-    # Prevent overwriting by prefixing with a timestamp
-    # safe_name = f"{int(__import__('time').time())}_{file.filename}"
-    safe_name = file.filename
-    file_path = os.path.join(upload_dir, safe_name)
-    with open(file_path, "wb") as f:
-        f.write(contents)
-    collection_name = f'course_id{course_id}'
+    # use uuid to avoid collisions
+    filename = f"{upload.filename}"
+    # path = os.path.join(upload_dir, filename)
+    # contents = await upload.read()
+    # with open(path, "wb") as f:
+    #     f.write(contents)
 
-    save_pdf_to_db(pdf_path=file_path, file_name=safe_name, collection_name=collection_name)
+    # 4. Record in DB
+    file_rec = CourseFile(
+        file_name=filename,
+        id_course=course_id
+    )
+    session.add(file_rec)
+    await session.commit()
+    # save_pdf_to_db(pdf_path=file_path, file_name=safe_name, collection_name=collection_name)
+    await asyncio.sleep(3)
+
+    return {"msg": "ok"}
+
+
+@router.get(
+    "/{course_id}/file",
+    response_model=list[FileOut],
+    summary="List uploaded files for a course"
+)
+async def list_course_files(
+    course_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
+    # verify ownership
+    course_obj = await session.get(Course, course_id)
+    if course_obj is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    if course_obj.id_user != current_user.id_user:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    res = await session.execute(
+        select(CourseFile).where(CourseFile.id_course == course_id)
+    )
+    files = res.scalars().all()
+    return files
+
+
+@router.post(
+    "/{course_id}/file/delete",
+    status_code=200,
+    summary="Delete a file from a course"
+)
+async def delete_course_file(
+    course_id: int,
+    payload: RemoveFileRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
+    # verify ownership
+    course_obj = await session.get(Course, course_id)
+    if course_obj is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    if course_obj.id_user != current_user.id_user:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # verify file belongs to this course
+    res = await session.execute(
+        select(CourseFile).where(
+            CourseFile.id_file == payload.id_file,
+            CourseFile.id_course == course_id
+        )
+    )
+    file_rec = res.scalar_one_or_none()
+    if file_rec is None:
+        raise HTTPException(status_code=404, detail="File not found in this course")
+
+    # delete the DB record
+    await session.execute(
+        delete(CourseFile).where(CourseFile.id_file == payload.id_file)
+    )
+    await session.commit()
+
+    return {"msg": "ok"}

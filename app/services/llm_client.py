@@ -76,13 +76,15 @@ def build_rag_prompt(user_message: str, contexts: List[str]) -> str:
 
 def call_llm(
     messages: List[dict[str, str]],
-    model: str = "fusechat-gemma-2-9b-instruct",
+    # model: str = "fusechat-gemma-2-9b-instruct",
+    model:str = "gpt-4.1-mini",
     temperature: float = 0.0,
     max_tokens: int = 512
 ) -> str:
     client = OpenAI(
-        base_url="http://localhost:1234/v1",
-        api_key="lm-studio"
+        # base_url="http://localhost:1234/v1",
+        # api_key="lm-studio"
+        api_key="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"
     )
     response = client.chat.completions.create(
         model=model,
