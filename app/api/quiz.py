@@ -1,8 +1,11 @@
 # app/endpoints/quiz.py
 
+import asyncio
+import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +18,7 @@ from app.models.question import Question
 from app.models.quiz import Quiz
 from app.models.quiz_attempt import QuizAttempt
 from app.models.quiz_attempt_answer import QuizAttemptAnswer
+from app.models.handle_quiz_attempt import HandleQuizAttempt
 from app.schemas.course import QuizOut
 from app.schemas.quiz import (
     AnswerOptionDo,
@@ -27,12 +31,11 @@ from app.schemas.quiz import (
     QuizSubmitRequest,
     QuizSubmitResponse,
 )
-from app.services.prompts import generate_feedback_prompt
 from app.services.llm_client import send_to_llm
+from app.services.prompts import generate_feedback_prompt
 
 
 router = APIRouter(prefix="/quiz", tags=["quiz"])
-
 
 @router.post("/create", response_model=QuizOut, status_code=201)
 async def create_quiz(
@@ -153,91 +156,43 @@ async def do_quiz(
 
     return QuizDoOut(title=quiz_obj.title, questions=question_dos)
 
-
-@router.post("/for_you/{quiz_id}/submit", response_model=QuizSubmitResponse)
-async def submit_quiz(
-    quiz_id: int,
-    payload: QuizSubmitRequest,
-    session: AsyncSession = Depends(get_session),
-    current_user=Depends(get_current_user),
+async def _background_generate_and_save(
+    session,
+    id_quiz_attempt: int,
+    prompt: str,
 ):
-    # 1. Load quiz
-    quiz_obj = await session.get(Quiz, quiz_id)
-    if not quiz_obj:
-        raise HTTPException(status_code=404, detail="Quiz not found")
+    """
+    Runs in the background: calls the LLM, writes feedback into the DB,
+    then fires the asyncio.Event so the SSE stream can emit "done".
+    """
+    # 1. Call LLM
+    feedback = send_to_llm([{"role": "user", "content": prompt}], collection_name='sample_text')
 
-    # 2. Membership check
-    member_res = await session.execute(
-        select(CourseMember.id_course_member).where(
-            CourseMember.id_course == quiz_obj.id_course,
-            CourseMember.id_user == current_user.id_user,
-        )
-    )
-    if member_res.scalar_one_or_none() is None:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    # 3. Ensure not yet taken
-    taken_res = await session.execute(
-        select(QuizAttempt.id_quiz_attempt).where(
-            QuizAttempt.id_quiz == quiz_id,
-            QuizAttempt.id_user == current_user.id_user,
-        )
-    )
-    if taken_res.scalar_one_or_none() is not None:
-        raise HTTPException(status_code=403, detail="Quiz already taken")
-
-    # 4. Create QuizAttempt
-    attempt = QuizAttempt(
-        id_quiz=quiz_id,
-        id_user=current_user.id_user,
-        attempt_date=datetime.utcnow(),
-    )
-    session.add(attempt)
-    await session.flush()  # populate attempt.id_quiz_attempt
-
-    # 5. Persist each answer
-    for ans in payload.answers:
-        answer_record = QuizAttemptAnswer(
-            id_quiz_attempt=attempt.id_quiz_attempt,
-            id_question=ans.id_question,
-            id_answer_option=ans.id_answer,
-        )
-        session.add(answer_record)
-
-    await session.commit()
-
-    # 6. Generate feedback
-    answers_list = [
-        {"id_question": ans.id_question, "id_answer": ans.id_answer}
-        for ans in payload.answers
-    ]
-    prompt = await generate_feedback_prompt(quiz_id, answers_list, session)
-    feedback = await send_to_llm({"role": "user", "content": prompt})
-
-    # 7. Persist feedback on attempt
+    attempt = await session.get(QuizAttempt, id_quiz_attempt)
     attempt.feedback = feedback
     session.add(attempt)
+
+    handle_quiz_attempt = HandleQuizAttempt(id_quiz_attempt=attempt.id_quiz_attempt, handled=False)
+    session.add(handle_quiz_attempt)
     await session.commit()
 
-    return QuizSubmitResponse(feedback=feedback)
 
 
-@router.post(
-    "/for_you/{quiz_id}/submit",
-    summary="Submit quiz and stream back SSE when feedback is ready",
-)
+@router.post("/for_you/{quiz_id}/submit", summary="Submit quiz and stream SSE for feedback")
 async def submit_quiz_sse(
     quiz_id: int,
     payload: QuizSubmitRequest,
     request: Request,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
-
+    # 1) Load quiz
     quiz = await session.get(Quiz, quiz_id)
     if not quiz:
         raise HTTPException(404, "Quiz not found")
 
+    # 2) Membership check
     member = await session.execute(
         select(CourseMember.id_course_member).where(
             CourseMember.id_course == quiz.id_course,
@@ -247,7 +202,7 @@ async def submit_quiz_sse(
     if member.scalar_one_or_none() is None:
         raise HTTPException(403, "Forbidden")
 
-
+    # 3) Ensure not yet taken
     already = await session.execute(
         select(QuizAttempt.id_quiz_attempt).where(
             QuizAttempt.id_quiz == quiz_id,
@@ -257,14 +212,15 @@ async def submit_quiz_sse(
     if already.scalar_one_or_none() is not None:
         raise HTTPException(403, "Quiz already taken")
 
-
+    # 4) Create QuizAttempt + save answers
     attempt = QuizAttempt(
         id_quiz=quiz_id,
         id_user=current_user.id_user,
         attempt_date=datetime.utcnow(),
     )
     session.add(attempt)
-    await session.flush()
+    await session.flush()  # now attempt.id_quiz_attempt is set
+    id_quiz_attempt = attempt.id_quiz_attempt
 
     for ans in payload.answers:
         session.add(
@@ -277,61 +233,23 @@ async def submit_quiz_sse(
 
     await session.commit()
 
-
+    # 5) Build prompt
     answers_list = [
         {"id_question": a.id_question, "id_answer": a.id_answer}
         for a in payload.answers
     ]
     prompt = await generate_feedback_prompt(quiz_id, answers_list, session)
 
-    generate_feedback_task.delay(attempt.id_quiz_attempt, prompt)
-
-
-    async def event_generator():
-        channel = f"quiz_result:{attempt.id_quiz_attempt}"
-        pubsub = redis_client.pubsub()
-        await pubsub.subscribe(channel)
-
-
-        yield "event: started\ndata: Quiz feedback generation started\n\n"
-
-        try:
-            while True:
-
-                if await request.is_disconnected():
-                    break
-
-                msg = await pubsub.get_message(
-                    ignore_subscribe_messages=True, timeout=1.0
-                )
-                if msg and msg["type"] == "message":
-                    payload = json.loads(msg["data"])
-                    feedback = payload["feedback"]
-
-
-                    async with get_session() as write_sess:
-                        qa = await write_sess.get(
-                            QuizAttempt, attempt.id_quiz_attempt
-                        )
-                        qa.feedback = feedback
-                        write_sess.add(qa)
-                        await write_sess.commit()
-
-                    done_data = json.dumps(
-                        {"id_quiz_attempt": attempt.id_quiz_attempt}
-                    )
-                    yield f"event: done\ndata: {done_data}\n\n"
-                    break
-
-                await asyncio.sleep(0.1)
-
-        finally:
-            await pubsub.unsubscribe(channel)
-            await pubsub.close()
-
-    return StreamingResponse(
-        event_generator(), media_type="text/event-stream"
+    # 6) Initialize event and schedule background task
+    evt = asyncio.Event()
+    background_tasks.add_task(
+        _background_generate_and_save,
+        session,
+        id_quiz_attempt,
+        prompt,
     )
+
+    return {'msg': 'wait for results'}
 
 @router.get("/for_you/{quiz_id}/results", response_model=QuizResultsOut)
 async def get_quiz_results(

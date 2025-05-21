@@ -5,6 +5,7 @@ from typing import List
 
 from openai import OpenAI
 from chromadb import PersistentClient
+from chromadb.errors import NotFoundError
 from chromadb.utils.embedding_functions import ONNXMiniLM_L6_V2
 from langchain.text_splitter import (
     RecursiveCharacterTextSplitter,
@@ -13,7 +14,7 @@ import pymupdf
 from app.core.settings import Settings
 
 RETRIEVAL_TOP_K = 5
-EMBEDDING_PROVIDERS = ["CUDAExecutionProvider"]
+EMBEDDING_PROVIDERS = ["CPUExecutionProvider"]
 
 def send_to_llm(
     messages: List[dict[str, str]], collection_name
@@ -25,11 +26,14 @@ def send_to_llm(
     history       = messages[:-1]
     original_user = messages[-1]["content"]
 
-    contexts = query_vector_db(original_user, collection_name)
+    try:
+        contexts = query_vector_db(original_user, collection_name)
+        augmented_user = build_rag_prompt(original_user, contexts)
+        rag_messages = history + [{"role": "user", "content": augmented_user}]
+    except NotFoundError:
+        rag_messages = messages
 
-    augmented_user = build_rag_prompt(original_user, contexts)
-
-    rag_messages = history + [{"role": "user", "content": augmented_user}]
+    # return 'sample text'
 
     return call_llm(rag_messages)
 
